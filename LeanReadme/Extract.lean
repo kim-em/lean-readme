@@ -24,7 +24,7 @@ structure Flags where
   expectWarning : Bool := false
   /-- Whether the block is left unchecked. -/
   noCheck : Bool := false
-  /-- Whether displayed theorem declarations are checked using an imported {lit}`recall` command. -/
+  /-- Whether displayed theorem declarations are checked against imported declarations. -/
   recall : Bool := false
 deriving Repr, Inhabited
 

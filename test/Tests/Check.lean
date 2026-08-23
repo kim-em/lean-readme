@@ -48,6 +48,18 @@ def checkSource (src : String) : IO Unit := do
   checkSource "```lean\ntheorem original (n : Nat) : n = n := rfl\n```\n\
 ```lean recall\ntheorem original (n : Nat) : n = n\n```\n"
 
+-- A recall block rejects a displayed theorem whose type has drifted.
+/-- info: README.md:5:0: error: type mismatch for recalled declaration '_private.readme.0.stable'
+  ∀ (n : Nat), n = 0
+is not definitionally equal to
+  ∀ (n : Nat), n = n
+FAIL -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean\ntheorem stable (n : Nat) : n = n := rfl\n```\n\
+```lean recall\ntheorem stable (n : Nat) : n = 0\n```\n"
+
 -- A clean block passes.
 /-- info: OK -/
 #guard_msgs in
