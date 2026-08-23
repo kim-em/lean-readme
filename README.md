@@ -60,6 +60,9 @@ In a `lean recall` block, each top-level `theorem` declaration is checked
 against the imported declaration with the same name while the Markdown remains
 unchanged. This is useful for expository theorem statements that should remain
 readable as ordinary Lean while being kept synchronized with the imported API.
+An unqualified theorem name is matched by its final name component and its
+definitionally equal type, so the block need not repeat the declaration's
+namespace opening.
 
 ## Prefix file
 

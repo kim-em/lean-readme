@@ -40,25 +40,27 @@ def checkSource (src : String) : IO Unit := do
       for d in outcome.messages do IO.print d.rendered
     IO.println (if anyFail then "FAIL" else "OK")
 
--- A recall block checks a displayed theorem against an earlier declaration.
+-- A recall block checks a displayed theorem against an imported declaration.
 /-- info: OK -/
 #guard_msgs in
 #eval show IO Unit from do
   unsafe Lean.enableInitializersExecution
-  checkSource "```lean\ntheorem original (n : Nat) : n = n := rfl\n```\n\
-```lean recall\ntheorem original (n : Nat) : n = n\n```\n"
+  checkSource "```lean recall\ntheorem add_comm (n m : Nat) : n + m = m + n\n```\n"
 
 -- A recall block rejects a displayed theorem whose type has drifted.
-/-- info: README.md:5:0: error: type mismatch for recalled declaration '_private.readme.0.stable'
-  ∀ (n : Nat), n = 0
-is not definitionally equal to
-  ∀ (n : Nat), n = n
+/-- info: README.md:2:0: error: no imported declaration named 'cons_append' has the displayed type
 FAIL -/
 #guard_msgs in
 #eval show IO Unit from do
   unsafe Lean.enableInitializersExecution
-  checkSource "```lean\ntheorem stable (n : Nat) : n = n := rfl\n```\n\
-```lean recall\ntheorem stable (n : Nat) : n = 0\n```\n"
+  checkSource "```lean recall\ntheorem cons_append (a : α) (as bs : List α) :\n  (a :: as) ++ bs = as ++ bs\n```\n"
+
+-- A recall block finds an imported declaration without repeating its namespace opening.
+/-- info: OK -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean recall\ntheorem cons_append (a : α) (as bs : List α) :\n  (a :: as) ++ bs = a :: (as ++ bs)\n```\n"
 
 -- A clean block passes.
 /-- info: OK -/

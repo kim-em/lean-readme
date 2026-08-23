@@ -130,27 +130,73 @@ private def checkTerm (inputCtx : Parser.InputContext) (blk : Block) (st : Comma
       (mkCommandContext boundedCtx blk.startByte) st
 
 /-- Checks that a displayed theorem signature is definitionally equal to an imported theorem. -/
-private def checkRecalledTheorem (cmd : Syntax) : CommandElabM Unit := withoutModifyingEnv do
+private def checkRecalledTheorem (cmd : Syntax) (declName? : Option Name := none) :
+    CommandElabM Unit := withoutModifyingEnv do
   let decl := cmd[1]
   let declId := decl[1]
   let id := declId[0]
-  let declName ← resolveGlobalConstNoOverload id
+  let declName ← match declName? with
+    | some declName => pure declName
+    | none => resolveGlobalConstNoOverload id
   addConstInfo id declName
   let info ← getConstInfo declName
   let (binders, typeStx) := expandDeclSig decl[2]
-  runTermElabM fun vars => do
-    Term.withAutoBoundImplicit do
-      Term.elabBinders binders.getArgs fun xs => do
-        let xs ← Term.addAutoBoundImplicits xs none
-        let type ← Term.elabType typeStx
-        Term.synthesizeSyntheticMVarsNoPostponing
-        let type ← mkForallFVars xs type
-        let type ← mkForallFVars vars type (usedOnly := true)
-        let mvs ← info.levelParams.mapM fun _ => mkFreshLevelMVar
-        let expected := info.type.instantiateLevelParams info.levelParams mvs
-        unless ← isDefEq expected type do
-          throwError "type mismatch for recalled declaration '{declName}'{indentExpr type}\n\
-            is not definitionally equal to{indentExpr expected}"
+  withScope ({ · with currNamespace := declName.getPrefix }) do
+    runTermElabM fun vars => do
+      Term.withAutoBoundImplicit do
+        Term.elabBinders binders.getArgs fun xs => do
+          let xs ← Term.addAutoBoundImplicits xs none
+          let type ← Term.elabType typeStx
+          Term.synthesizeSyntheticMVarsNoPostponing
+          let type ← mkForallFVars xs type
+          let type ← mkForallFVars vars type (usedOnly := true)
+          let mvs ← info.levelParams.mapM fun _ => mkFreshLevelMVar
+          let expected := info.type.instantiateLevelParams info.levelParams mvs
+          unless ← isDefEq expected type do
+            throwError "type mismatch for recalled declaration '{declName}'{indentExpr type}\n\
+              is not definitionally equal to{indentExpr expected}"
+
+/-- Imported declarations whose final name component matches the displayed theorem name. -/
+private def recalledCandidates (cmd : Syntax) (env : Environment) : Array Name := Id.run do
+  let idName := cmd[1][1][0].getId
+  if !idName.getPrefix.isAnonymous then
+    return if env.contains idName then #[idName] else #[]
+  let mut candidates := #[]
+  for (name, _) in env.constants do
+    if (env.getModuleIdxFor? name).isSome && !name.isInternal &&
+        name.getString! == idName.getString! then
+      candidates := candidates.push name
+  return candidates
+
+/-- Finds the imported theorem with the displayed name and type, independent of namespace openings. -/
+private def checkRecalledTheoremFromImports (cmd : Syntax) (ctx : Command.Context)
+    (st : Command.State) : IO Command.State := do
+  let candidates := recalledCandidates cmd st.env
+  if candidates.isEmpty then
+    return ← runCmd (checkRecalledTheorem cmd) ctx st
+  let before := st.messages.toArray.size
+  let mut successes : Array (Name × Command.State) := #[]
+  let mut failures : Array Command.State := #[]
+  for candidate in candidates do
+    let st' ← runCmd (checkRecalledTheorem cmd (some candidate)) ctx st
+    let newMsgs := st'.messages.toArray.extract before st'.messages.toArray.size
+    if newMsgs.any (·.severity == .error) then
+      failures := failures.push st'
+    else
+      successes := successes.push (candidate, st')
+  match successes with
+  | #[(_, st')] => return st'
+  | #[] =>
+    if h : failures.size = 1 then
+      return failures[0]'(by simp [h])
+    let id := cmd[1][1][0]
+    return ← runCmd
+      (throwErrorAt id "no imported declaration named '{id.getId}' has the displayed type") ctx st
+  | _ =>
+    let id := cmd[1][1][0]
+    let names := successes.map (·.1)
+    return ← runCmd
+      (throwErrorAt id "ambiguous recalled declaration '{id.getId}'; matches: {names.toList}") ctx st
 
 /-- Elaborates the commands of a command code block in place, threading the command state. -/
 private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : Command.State) :
@@ -174,12 +220,11 @@ private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : C
     st := { st with messages := if isRecalledTheorem then messagesBeforeParse else pmsgs }
     ps := ps'
     if Parser.isTerminalCommand cmd then break
-    let action :=
-      if isRecalledTheorem then
-        checkRecalledTheorem cmd
-      else
-        elabCommandTopLevel cmd
-    st ← runCmd action (mkCommandContext boundedCtx startPos) st
+    let ctx := mkCommandContext boundedCtx startPos
+    st ← if isRecalledTheorem then
+      checkRecalledTheoremFromImports cmd ctx st
+    else
+      runCmd (elabCommandTopLevel cmd) ctx st
   return st
 
 /-- Applies a block's expected-message flags to the messages produced by that block. -/
