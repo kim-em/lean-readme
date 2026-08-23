@@ -156,15 +156,14 @@ private def checkRecalledTheorem (cmd : Syntax) (declName? : Option Name := none
             throwError "type mismatch for recalled declaration '{declName}'{indentExpr type}\n\
               is not definitionally equal to{indentExpr expected}"
 
-/-- Imported declarations whose final name component matches the displayed theorem name. -/
+/-- Available declarations whose final name component matches the displayed theorem name. -/
 private def recalledCandidates (cmd : Syntax) (env : Environment) : Array Name := Id.run do
   let idName := cmd[1][1][0].getId
   if !idName.getPrefix.isAnonymous then
     return if env.contains idName then #[idName] else #[]
   let mut candidates := #[]
   for (name, _) in env.constants do
-    if (env.getModuleIdxFor? name).isSome && !name.isInternal &&
-        name.getString! == idName.getString! then
+    if !name.isInternal && name.getString! == idName.getString! then
       candidates := candidates.push name
   return candidates
 
