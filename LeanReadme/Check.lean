@@ -120,6 +120,17 @@ private def collectImports (inputCtx : Parser.InputContext) (blocks : Array Bloc
       imports := imports ++ HeaderSyntax.imports header (includeInit := false)
   return imports
 
+/-- Returns the global byte position immediately after a command block's module header. -/
+private def blockHeaderEnd (inputCtx : Parser.InputContext) (blk : Block) :
+    IO String.Pos.Raw := do
+  let raw : Substring.Raw := {
+    str := inputCtx.inputString, startPos := blk.startByte, stopPos := blk.stopByte
+  }
+  let blockCtx := mkInputContext raw.toString inputCtx.fileName
+    (normalizeLineEndings := false)
+  let (_, parserState, _) ← parseHeader blockCtx
+  return parserState.pos.offsetBy blk.startByte
+
 /--
 Parses and elaborates a term block in place, threading the command state; the term does not extend the environment.
 -/
@@ -222,7 +233,7 @@ private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : C
     IO Command.State := do
   let boundedCtx ← boundedBlockInput inputCtx blk
   let mut st := st
-  let mut ps : ModuleParserState := { pos := blk.startByte }
+  let mut ps : ModuleParserState := { pos := ← blockHeaderEnd inputCtx blk }
   repeat
     if boundedCtx.atEnd ps.pos then break
     let scope := st.scopes.head!
@@ -238,8 +249,7 @@ private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : C
       cmd[1].isOfKind ``Lean.Parser.Command.theorem
     st := { st with messages := if isRecalledTheorem then messagesBeforeParse else pmsgs }
     ps := ps'
-    if Parser.isTerminalCommand cmd then
-      if cmd.isOfKind ``Lean.Parser.Command.import then continue else break
+    if Parser.isTerminalCommand cmd then break
     let ctx := mkCommandContext boundedCtx startPos
     st ← if isRecalledTheorem then
       checkRecalledTheoremFromImports cmd ctx st
