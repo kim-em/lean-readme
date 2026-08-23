@@ -51,7 +51,7 @@ Environment for a header-less module ({lit}`Init` imported), as if the source we
 def bareEnv (extraImports : Array Import := #[]) : IO Environment := do
   let imports : Array Import :=
     #[{ module := `Init }, { module := `Init, isMeta := true }] ++ extraImports
-  let env ← importModules imports (opts := {}) (loadExts := true) (level := .exported)
+  let env ← importModules imports (opts := {}) (loadExts := true) (level := .private)
   return env.setMainModule mainModuleName
 
 /-- Builds the initial command state from the prefix file, or a bare module environment. -/
