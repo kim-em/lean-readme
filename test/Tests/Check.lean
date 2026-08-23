@@ -69,6 +69,19 @@ FAIL -/
   unsafe Lean.enableInitializersExecution
   checkSource "```lean\ndef a := 1\n```\n"
 
+-- An import is processed as part of the synthetic module header, and checking continues after it.
+/-- info: README.md:3:25: error: Type mismatch
+  true
+has type
+  Bool
+but is expected to have type
+  Nat
+FAIL -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean\nimport Init\ndef afterImport : Nat := true\n```\n"
+
 -- An unexpected error fails and is reported at the README position.
 /-- info: README.md:2:15: error: Type mismatch
   true

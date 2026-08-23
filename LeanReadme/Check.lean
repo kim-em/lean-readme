@@ -48,21 +48,26 @@ def runCmd (action : CommandElabM Unit) (ctx : Command.Context) (st : Command.St
 /--
 Environment for a header-less module ({lit}`Init` imported), as if the source were in a {lit}`module`.
 -/
-def bareEnv : IO Environment := do
-  let imports : Array Import := #[{ module := `Init }, { module := `Init, isMeta := true }]
+def bareEnv (extraImports : Array Import := #[]) : IO Environment := do
+  let imports : Array Import :=
+    #[{ module := `Init }, { module := `Init, isMeta := true }] ++ extraImports
   let env ← importModules imports (opts := {}) (loadExts := true) (level := .exported)
   return env.setMainModule mainModuleName
 
 /-- Builds the initial command state from the prefix file, or a bare module environment. -/
-def initialState (prefixPath : System.FilePath) : IO Command.State := do
+def initialState (prefixPath : System.FilePath) (extraImports : Array Import := #[]) :
+    IO Command.State := do
   if !(← prefixPath.pathExists) then
-    return Command.mkState (← bareEnv) {} {}
+    return Command.mkState (← bareEnv extraImports) {} {}
   let src ← IO.FS.readFile prefixPath
   let src := src.crlfToLf
   let inputCtx := mkInputContext src prefixPath.toString (normalizeLineEndings := false)
   let (header, parserState, msgs) ← parseHeader inputCtx
-  let (env, msgs) ← processHeader header (opts := {}) (messages := msgs) inputCtx
-    (mainModule := mainModuleName)
+  let imports := HeaderSyntax.imports header ++ extraImports
+  let (env, msgs) ← processHeaderCore (HeaderSyntax.startPos header) imports
+    (HeaderSyntax.isModule header)
+    (opts := {}) (messages := msgs) inputCtx (mainModule := mainModuleName)
+    (headerStx? := header)
   let mut st := Command.mkState env msgs {}
   -- Run any commands after the header.
   let mut ps := parserState
@@ -99,6 +104,21 @@ private def boundedBlockInput (inputCtx : Parser.InputContext) (blk : Block) :
   let some boundedCtx := stopInputCtxAt inputCtx blk.stopByte
     | throw <| IO.userError "internal error: block stop byte beyond end of input"
   return boundedCtx
+
+/-- Collects module imports from command blocks so they can be processed as a module header. -/
+private def collectImports (inputCtx : Parser.InputContext) (blocks : Array Block) :
+    IO (Array Import) := do
+  let mut imports := #[]
+  for blk in blocks do
+    unless blk.flags.term || blk.flags.noCheck do
+      let raw : Substring.Raw := {
+        str := inputCtx.inputString, startPos := blk.startByte, stopPos := blk.stopByte
+      }
+      let blockCtx := mkInputContext raw.toString inputCtx.fileName
+        (normalizeLineEndings := false)
+      let (header, _, _) ← parseHeader blockCtx
+      imports := imports ++ HeaderSyntax.imports header (includeInit := false)
+  return imports
 
 /--
 Parses and elaborates a term block in place, threading the command state; the term does not extend the environment.
@@ -218,7 +238,8 @@ private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : C
       cmd[1].isOfKind ``Lean.Parser.Command.theorem
     st := { st with messages := if isRecalledTheorem then messagesBeforeParse else pmsgs }
     ps := ps'
-    if Parser.isTerminalCommand cmd then break
+    if Parser.isTerminalCommand cmd then
+      if cmd.isOfKind ``Lean.Parser.Command.import then continue else break
     let ctx := mkCommandContext boundedCtx startPos
     st ← if isRecalledTheorem then
       checkRecalledTheoremFromImports cmd ctx st
@@ -287,7 +308,8 @@ def checkFile (prefixPath file : System.FilePath) : IO FileResult := do
     }
   | .ok blocks =>
     let inputCtx := mkInputContext src file.toString (normalizeLineEndings := false)
-    let mut st ← initialState prefixPath
+    let imports ← collectImports inputCtx blocks
+    let mut st ← initialState prefixPath imports
     let mut out := ""
     let mut failed := false
     for blk in blocks do
