@@ -19,7 +19,7 @@ def blockSummary (s : String) (b : Block) : String :=
   let content := ({ str := s, startPos := b.startByte, stopPos := b.stopByte : Substring.Raw }).toString
   let f := b.flags
   let tags := [("term", f.term), ("error", f.expectError),
-               ("warning", f.expectWarning), ("nocheck", f.noCheck)]
+               ("warning", f.expectWarning), ("nocheck", f.noCheck), ("recall", f.recall)]
               |>.filterMap (fun (n, on) => if on then some n else none)
   s!"L{b.fenceLine} [{String.intercalate "," tags}] {repr content}"
 
@@ -37,6 +37,11 @@ def report (s : String) : IO Unit :=
 /-- info: L1 [term,error] "1 + true\n" -/
 #guard_msgs in
 #eval report "```lean term error\n1 + true\n```\n"
+
+-- Recall blocks are recognized separately from ordinary command blocks.
+/-- info: L1 [recall] "theorem Nat.add_comm (n m : Nat) : n + m = m + n\n" -/
+#guard_msgs in
+#eval report "```lean recall\ntheorem Nat.add_comm (n m : Nat) : n + m = m + n\n```\n"
 
 -- Non-lean fences are skipped, including their bodies.
 /-- info: L4 [] "def y := 2\n" -/

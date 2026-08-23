@@ -6,6 +6,7 @@ Author: David Thrane Christiansen
 module
 
 public import Lean.Elab.Command
+public import Lean.Elab.DeclUtil
 public import Lean.Elab.Import
 public import Lean.Parser
 public import LeanReadme.Extract
@@ -14,7 +15,7 @@ public import LeanReadme.Report
 set_option linter.missingDocs true
 set_option doc.verso true
 
-open Lean Lean.Elab Lean.Elab.Command Lean.Parser
+open Lean Lean.Elab Lean.Elab.Command Lean.Meta Lean.Parser
 
 public section
 
@@ -128,6 +129,29 @@ private def checkTerm (inputCtx : Parser.InputContext) (blk : Block) (st : Comma
     runCmd (liftTermElabM (discard <| Term.elabTermAndSynthesize stx none))
       (mkCommandContext boundedCtx blk.startByte) st
 
+/-- Checks that a displayed theorem signature is definitionally equal to an imported theorem. -/
+private def checkRecalledTheorem (cmd : Syntax) : CommandElabM Unit := withoutModifyingEnv do
+  let decl := cmd[1]
+  let declId := decl[1]
+  let id := declId[0]
+  let declName ← resolveGlobalConstNoOverload id
+  addConstInfo id declName
+  let info ← getConstInfo declName
+  let (binders, typeStx) := expandDeclSig decl[2]
+  runTermElabM fun vars => do
+    Term.withAutoBoundImplicit do
+      Term.elabBinders binders.getArgs fun xs => do
+        let xs ← Term.addAutoBoundImplicits xs none
+        let type ← Term.elabType typeStx
+        Term.synthesizeSyntheticMVarsNoPostponing
+        let type ← mkForallFVars xs type
+        let type ← mkForallFVars vars type (usedOnly := true)
+        let mvs ← info.levelParams.mapM fun _ => mkFreshLevelMVar
+        let expected := info.type.instantiateLevelParams info.levelParams mvs
+        unless ← isDefEq expected type do
+          throwError "type mismatch for recalled declaration '{declName}'{indentExpr type}\n\
+            is not definitionally equal to{indentExpr expected}"
+
 /-- Elaborates the commands of a command code block in place, threading the command state. -/
 private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : Command.State) :
     IO Command.State := do
@@ -142,11 +166,20 @@ private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : C
       currNamespace := scope.currNamespace, openDecls := scope.openDecls
     }
     let startPos := ps.pos
+    let messagesBeforeParse := st.messages
     let (cmd, ps', pmsgs) := parseCommand boundedCtx pmctx ps st.messages
-    st := { st with messages := pmsgs }
+    let isRecalledTheorem := blk.flags.recall &&
+      cmd.isOfKind ``Lean.Parser.Command.declaration &&
+      cmd[1].isOfKind ``Lean.Parser.Command.theorem
+    st := { st with messages := if isRecalledTheorem then messagesBeforeParse else pmsgs }
     ps := ps'
     if Parser.isTerminalCommand cmd then break
-    st ← runCmd (elabCommandTopLevel cmd) (mkCommandContext boundedCtx startPos) st
+    let action :=
+      if isRecalledTheorem then
+        checkRecalledTheorem cmd
+      else
+        elabCommandTopLevel cmd
+    st ← runCmd action (mkCommandContext boundedCtx startPos) st
   return st
 
 /-- Applies a block's expected-message flags to the messages produced by that block. -/

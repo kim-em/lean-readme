@@ -24,6 +24,8 @@ structure Flags where
   expectWarning : Bool := false
   /-- Whether the block is left unchecked. -/
   noCheck : Bool := false
+  /-- Whether displayed theorem declarations are checked using an imported {lit}`recall` command. -/
+  recall : Bool := false
 deriving Repr, Inhabited
 
 /-- A Lean code block, delimited by byte offsets into the source. -/
@@ -57,6 +59,7 @@ private def parseFlags (words : Array String.Slice) : Flags := Id.run do
     | "error" => f := { f with expectError := true }
     | "warning" => f := { f with expectWarning := true }
     | "nocheck" => f := { f with noCheck := true }
+    | "recall" => f := { f with recall := true }
     | _ => pure ()
   return f
 

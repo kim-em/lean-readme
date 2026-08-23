@@ -40,6 +40,14 @@ def checkSource (src : String) : IO Unit := do
       for d in outcome.messages do IO.print d.rendered
     IO.println (if anyFail then "FAIL" else "OK")
 
+-- A recall block checks a displayed theorem against an earlier declaration.
+/-- info: OK -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean\ntheorem original (n : Nat) : n = n := rfl\n```\n\
+```lean recall\ntheorem original (n : Nat) : n = n\n```\n"
+
 -- A clean block passes.
 /-- info: OK -/
 #guard_msgs in
