@@ -50,10 +50,16 @@ three or more backticks followed by an info string beginning with
 | `error` | Expect at least one error |
 | `warning` | Expect at least one warning |
 | `nocheck` | Skip the block |
+| `recall` | Check displayed `theorem` declarations against imported declarations |
 
 Blocks without any flag are checked as commands. Unrecognized flags
 are ignored. Unexpected errors or warnings cause the check to fail, as
 does the absence of expected errors or warnings.
+
+In a `lean recall` block, each top-level `theorem` declaration is checked
+against the imported declaration resolved by its name. The types must be
+definitionally equal, but the Markdown remains an ordinary theorem statement.
+Normal Lean namespace and `open` resolution applies.
 
 ## Prefix file
 

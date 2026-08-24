@@ -40,6 +40,33 @@ def checkSource (src : String) : IO Unit := do
       for d in outcome.messages do IO.print d.rendered
     IO.println (if anyFail then "FAIL" else "OK")
 
+-- A recall block checks a displayed theorem against an imported declaration.
+/-- info: OK -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean recall\ntheorem Nat.add_comm (n m : Nat) : n + m = m + n\n```\n"
+
+-- A recall block rejects a displayed theorem whose type has drifted.
+/-- info: README.md:2:0: error: type mismatch for recalled declaration 'Nat.add_comm'
+  ∀ (n m : Nat), n + m = n + m
+is not definitionally equal to
+  ∀ (n m : Nat), n + m = m + n
+FAIL -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean recall\ntheorem Nat.add_comm (n m : Nat) : n + m = n + m\n```\n"
+
+-- A recall block does not accept a declaration introduced by the README itself.
+/-- info: README.md:5:0: error: recalled declaration 'localTheorem' is not imported
+FAIL -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean\ntheorem localTheorem : True := trivial\n```\n\
+```lean recall\ntheorem localTheorem : True\n```\n"
+
 -- A clean block passes.
 /-- info: OK -/
 #guard_msgs in
