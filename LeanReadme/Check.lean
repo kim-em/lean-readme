@@ -134,29 +134,35 @@ Checks that a displayed theorem signature is definitionally equal to an imported
 
 The signature elaboration follows `Mathlib.Tactic.Recall`, by Mac Malone and Kyle Miller.
 -/
-private def checkRecalledTheorem (cmd : Syntax) : CommandElabM Unit := withoutModifyingEnv do
+private def checkRecalledTheorem (cmd : Syntax) (target? : Option String) :
+    CommandElabM Unit := withoutModifyingEnv do
   let decl := cmd[1]
   let declId := decl[1]
   let id := declId[0]
-  let declName ← resolveGlobalConstNoOverload id
+  let declName ← match target? with
+    | some target => pure target.toName
+    | none => resolveGlobalConstNoOverload id
   addConstInfo id declName
   let info ← getConstInfo declName
   unless (← getEnv).isImportedConst declName do
-    throwErrorAt id "recalled declaration '{id.getId}' is not imported"
+    let reportedName := if target?.isSome then declName else id.getId
+    throwErrorAt id "recalled declaration '{reportedName}' is not imported"
   let (binders, typeStx) := expandDeclSig decl[2]
-  runTermElabM fun vars => do
-    Term.withAutoBoundImplicit do
-      Term.elabBinders binders.getArgs fun xs => do
-        let xs ← Term.addAutoBoundImplicits xs none
-        let type ← Term.elabType typeStx
-        Term.synthesizeSyntheticMVarsNoPostponing
-        let type ← mkForallFVars xs type
-        let type ← mkForallFVars vars type (usedOnly := true)
-        let mvs ← info.levelParams.mapM fun _ => mkFreshLevelMVar
-        let expected := info.type.instantiateLevelParams info.levelParams mvs
-        unless ← isDefEq expected type do
-          throwError "type mismatch for recalled declaration '{declName}'{indentExpr type}\n\
-            is not definitionally equal to{indentExpr expected}"
+  withScope (fun scope =>
+      if target?.isSome then { scope with currNamespace := declName.getPrefix } else scope) do
+    runTermElabM fun vars => do
+      Term.withAutoBoundImplicit do
+        Term.elabBinders binders.getArgs fun xs => do
+          let xs ← Term.addAutoBoundImplicits xs none
+          let type ← Term.elabType typeStx
+          Term.synthesizeSyntheticMVarsNoPostponing
+          let type ← mkForallFVars xs type
+          let type ← mkForallFVars vars type (usedOnly := true)
+          let mvs ← info.levelParams.mapM fun _ => mkFreshLevelMVar
+          let expected := info.type.instantiateLevelParams info.levelParams mvs
+          unless ← isDefEq expected type do
+            throwError "type mismatch for recalled declaration '{declName}'{indentExpr type}\n\
+              is not definitionally equal to{indentExpr expected}"
 
 /-- Elaborates the commands of a command code block in place, threading the command state. -/
 private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : Command.State) :
@@ -180,7 +186,10 @@ private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : C
     st := { st with messages := if isRecalledTheorem then messagesBeforeParse else pmsgs }
     ps := ps'
     if Parser.isTerminalCommand cmd then break
-    let action := if isRecalledTheorem then checkRecalledTheorem cmd else elabCommandTopLevel cmd
+    let action := if isRecalledTheorem then
+      checkRecalledTheorem cmd blk.flags.recallTarget?
+    else
+      elabCommandTopLevel cmd
     st ← runCmd action (mkCommandContext boundedCtx startPos) st
   return st
 
