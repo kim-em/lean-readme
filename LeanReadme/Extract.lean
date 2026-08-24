@@ -24,6 +24,10 @@ structure Flags where
   expectWarning : Bool := false
   /-- Whether the block is left unchecked. -/
   noCheck : Bool := false
+  /-- Whether displayed theorem declarations are checked against imported declarations. -/
+  recall : Bool := false
+  /-- Fully qualified declaration selected by a {lit}`recall` flag, when supplied. -/
+  recallTarget? : Option String := none
 deriving Repr, Inhabited
 
 /-- A Lean code block, delimited by byte offsets into the source. -/
@@ -51,13 +55,22 @@ private def backtickRun (line : String.Slice) : Nat :=
 /-- Parses the words after {lit}`lean` in an info string into {name}`Flags`. Unknown words are ignored. -/
 private def parseFlags (words : Array String.Slice) : Flags := Id.run do
   let mut f : Flags := {}
-  for w in words do
-    match w.copy with
+  let mut i : Nat := 0
+  while i < words.size do
+    match words[i]!.copy with
     | "term" => f := { f with term := true }
     | "error" => f := { f with expectError := true }
     | "warning" => f := { f with expectWarning := true }
     | "nocheck" => f := { f with noCheck := true }
+    | "recall" =>
+      f := { f with recall := true }
+      if let some target := words[i + 1]? then
+        let target := target.copy
+        unless ["term", "error", "warning", "nocheck", "recall"].contains target do
+          f := { f with recallTarget? := some target }
+          i := i + 1
     | _ => pure ()
+    i := i + 1
   return f
 
 open Lean in

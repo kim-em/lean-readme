@@ -48,6 +48,24 @@ def checkFileSource (src : String) : IO Unit :=
     let result ← checkFile ("does-not-exist" : System.FilePath) path
     IO.print <| result.output.replace path.toString "README.md"
 
+-- A recall target checks an imported declaration while leaving the displayed name short.
+/-- info: OK -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean recall Nat.add_comm\ntheorem add_comm (n m : Nat) : n + m = m + n\n```\n"
+
+-- A targeted recall rejects a displayed theorem whose type has drifted.
+/-- info: README.md:2:0: error: type mismatch for recalled declaration 'Nat.add_comm'
+  ∀ (n m : Nat), n + m = n + m
+is not definitionally equal to
+  ∀ (n m : Nat), n + m = m + n
+FAIL -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkSource "```lean recall Nat.add_comm\ntheorem add_comm (n m : Nat) : n + m = n + m\n```\n"
+
 -- Checking continues after imports in a command block.
 /-- info: README.md:3:25: error: Type mismatch
   true

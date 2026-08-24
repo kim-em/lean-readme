@@ -50,6 +50,7 @@ three or more backticks followed by an info string beginning with
 | `error` | Expect at least one error |
 | `warning` | Expect at least one warning |
 | `nocheck` | Skip the block |
+| `recall [name]` | Check displayed `theorem` declarations against imported declarations |
 
 Blocks without any flag are checked as commands. Unrecognized flags
 are ignored. Unexpected errors or warnings cause the check to fail, as
@@ -58,6 +59,19 @@ does the absence of expected errors or warnings.
 Imports at the start of checked command blocks are collected before checking and
 loaded together as the README's module header. Checking resumes after each
 block's imports, so commands later in the same block are not skipped.
+
+In a `lean recall` block, each top-level `theorem` declaration is checked
+against the imported declaration resolved by its name. A fully qualified target
+after `recall` selects the declaration without changing the displayed theorem:
+
+````markdown
+```lean recall Nat.add_comm
+theorem add_comm (n m : Nat) : n + m = m + n
+```
+````
+
+The displayed and imported types must be definitionally equal. When a target is
+given, the displayed signature is elaborated in the target's namespace.
 
 ## Prefix file
 
