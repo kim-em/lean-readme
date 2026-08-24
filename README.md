@@ -55,6 +55,10 @@ Blocks without any flag are checked as commands. Unrecognized flags
 are ignored. Unexpected errors or warnings cause the check to fail, as
 does the absence of expected errors or warnings.
 
+Imports at the start of checked command blocks are collected before checking and
+loaded together as the README's module header. Checking resumes after each
+block's imports, so commands later in the same block are not skipped.
+
 ## Prefix file
 
 `.lean-readme/Prefix.lean` is an ordinary Lean source file. Every

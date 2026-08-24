@@ -40,6 +40,50 @@ def checkSource (src : String) : IO Unit := do
       for d in outcome.messages do IO.print d.rendered
     IO.println (if anyFail then "FAIL" else "OK")
 
+/-- Runs a source string through the complete file checker with a stable displayed path. -/
+def checkFileSource (src : String) : IO Unit :=
+  IO.FS.withTempFile fun handle path => do
+    handle.putStr src
+    handle.flush
+    let result ← checkFile ("does-not-exist" : System.FilePath) path
+    IO.print <| result.output.replace path.toString "README.md"
+
+-- Checking continues after imports in a command block.
+/-- info: README.md:3:25: error: Type mismatch
+  true
+has type
+  Bool
+but is expected to have type
+  Nat
+README.md: 1 code blocks checked, FAILED -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkFileSource "```lean\nimport Init\ndef afterImport : Nat := true\n```\n"
+
+-- Imports in later self-contained blocks are loaded before checking begins.
+/-- info: README.md: 2 code blocks checked, OK -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkFileSource "```lean\ndef beforeImport := 1\n```\n\
+\n```lean\nimport Lean.Parser.Tactic\n```\n"
+
+-- README imports use ordinary-file visibility, so imported implementations are executable.
+/-- info: README.md: 1 code blocks checked, OK -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkFileSource "```lean\nimport LeanReadme.Extract\n#eval (LeanReadme.extract \"\").isOk\n```\n"
+
+-- A malformed import is reported normally rather than panicking during header extraction.
+/-- info: README.md:2:6: error: unexpected token 'def'; expected identifier
+README.md: 1 code blocks checked, FAILED -/
+#guard_msgs in
+#eval show IO Unit from do
+  unsafe Lean.enableInitializersExecution
+  checkFileSource "```lean\nimport\ndef afterMalformedImport := 1\n```\n"
+
 -- A clean block passes.
 /-- info: OK -/
 #guard_msgs in

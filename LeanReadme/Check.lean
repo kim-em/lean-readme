@@ -44,24 +44,27 @@ def runCmd (action : CommandElabM Unit) (ctx : Command.Context) (st : Command.St
     }
     return { st with messages := st.messages.add msg }
 
-/--
-Environment for a header-less module ({lit}`Init` imported), as if the source were in a {lit}`module`.
--/
-def bareEnv : IO Environment := do
-  let imports : Array Import := #[{ module := `Init }, { module := `Init, isMeta := true }]
-  let env ← importModules imports (opts := {}) (loadExts := true) (level := .exported)
+/-- Environment for a header-less Lean file ({lit}`Init` imported). -/
+def bareEnv (extraImports : Array Import := #[]) : IO Environment := do
+  let imports : Array Import :=
+    #[{ module := `Init }, { module := `Init, isMeta := true }] ++ extraImports
+  let env ← importModules imports (opts := {}) (loadExts := true) (level := .private)
   return env.setMainModule mainModuleName
 
 /-- Builds the initial command state from the prefix file, or a bare module environment. -/
-def initialState (prefixPath : System.FilePath) : IO Command.State := do
+def initialState (prefixPath : System.FilePath) (extraImports : Array Import := #[]) :
+    IO Command.State := do
+  unsafe Lean.enableInitializersExecution
   if !(← prefixPath.pathExists) then
-    return Command.mkState (← bareEnv) {} {}
+    return Command.mkState (← bareEnv extraImports) {} {}
   let src ← IO.FS.readFile prefixPath
   let src := src.crlfToLf
   let inputCtx := mkInputContext src prefixPath.toString (normalizeLineEndings := false)
   let (header, parserState, msgs) ← parseHeader inputCtx
-  let (env, msgs) ← processHeader header (opts := {}) (messages := msgs) inputCtx
-    (mainModule := mainModuleName)
+  let imports := HeaderSyntax.imports header ++ extraImports
+  let (env, msgs) ← processHeaderCore (HeaderSyntax.startPos header) imports false
+    (opts := {}) (messages := msgs) inputCtx (mainModule := mainModuleName)
+    (headerStx? := header)
   let mut st := Command.mkState env msgs {}
   -- Run any commands after the header.
   let mut ps := parserState
@@ -99,6 +102,58 @@ private def boundedBlockInput (inputCtx : Parser.InputContext) (blk : Block) :
     | throw <| IO.userError "internal error: block stop byte beyond end of input"
   return boundedCtx
 
+/-- Result of collecting and checking README command-block headers. -/
+private structure HeaderScan where
+  imports : Array Import := #[]
+  firstImportLine? : Option Nat := none
+  failed : Bool := false
+  output : String := ""
+
+/-- Moves a diagnostic from a block-local input context to its position in the README. -/
+private def shiftHeaderMessage (blk : Block) (msg : Lean.Message) : Lean.Message :=
+  let shift (pos : Position) := { pos with line := pos.line + blk.fenceLine }
+  { msg with pos := shift msg.pos, endPos := msg.endPos.map shift }
+
+/-- Collects imports from checked command blocks and reports malformed headers. -/
+private def scanHeaders (inputCtx : Parser.InputContext) (blocks : Array Block) : IO HeaderScan := do
+  let mut result : HeaderScan := {}
+  for blk in blocks do
+    if blk.flags.noCheck then
+      continue
+    if blk.flags.term then
+      continue
+    let raw : Substring.Raw := {
+      str := inputCtx.inputString, startPos := blk.startByte, stopPos := blk.stopByte
+    }
+    let blockCtx := mkInputContext raw.toString inputCtx.fileName
+      (normalizeLineEndings := false)
+    let (header, _, messages) ← parseHeader blockCtx
+    if messages.hasErrors then
+      let mut output := result.output
+      for msg in messages.toArray do
+        output := output ++ (← shiftHeaderMessage blk msg |>.toString)
+      result := { result with failed := true, output }
+      continue
+    let imports := HeaderSyntax.imports header (includeInit := false)
+    if !imports.isEmpty then
+      result := {
+        result with
+        imports := result.imports ++ imports
+        firstImportLine? := result.firstImportLine?.orElse fun _ => some (blk.fenceLine + 1)
+      }
+  return result
+
+/-- Returns the global byte position immediately after a command block's module header. -/
+private def blockHeaderEnd (inputCtx : Parser.InputContext) (blk : Block) :
+    IO String.Pos.Raw := do
+  let raw : Substring.Raw := {
+    str := inputCtx.inputString, startPos := blk.startByte, stopPos := blk.stopByte
+  }
+  let blockCtx := mkInputContext raw.toString inputCtx.fileName
+    (normalizeLineEndings := false)
+  let (_, parserState, _) ← parseHeader blockCtx
+  return parserState.pos.offsetBy blk.startByte
+
 /--
 Parses and elaborates a term block in place, threading the command state; the term does not extend the environment.
 -/
@@ -133,7 +188,7 @@ private def checkCommands (inputCtx : Parser.InputContext) (blk : Block) (st : C
     IO Command.State := do
   let boundedCtx ← boundedBlockInput inputCtx blk
   let mut st := st
-  let mut ps : ModuleParserState := { pos := blk.startByte }
+  let mut ps : ModuleParserState := { pos := ← blockHeaderEnd inputCtx blk }
   repeat
     if boundedCtx.atEnd ps.pos then break
     let scope := st.scopes.head!
@@ -210,9 +265,30 @@ def checkFile (prefixPath file : System.FilePath) : IO FileResult := do
     }
   | .ok blocks =>
     let inputCtx := mkInputContext src file.toString (normalizeLineEndings := false)
-    let mut st ← initialState prefixPath
+    let header ← scanHeaders inputCtx blocks
+    if header.failed then
+      return {
+        path := file, blockCount := blocks.size, failed := true,
+        output := header.output ++ s!"{file}: {blocks.size} code blocks checked, FAILED\n"
+      }
+    let init : Except IO.Error Command.State ← try
+      pure <| .ok (← initialState prefixPath header.imports)
+    catch e =>
+      pure <| .error e
+    if let .error e := init then
+      return {
+        path := file, blockCount := blocks.size, failed := true,
+        output := s!"{file}:{header.firstImportLine?.getD 1}:0: error: {e}\n\
+          {file}: {blocks.size} code blocks checked, FAILED\n"
+      }
+    let .ok st := init | unreachable!
+    let mut st := st
     let mut out := ""
     let mut failed := false
+    for msg in st.messages.toArray do
+      if msg.severity != .information then
+        failed := true
+      out := out ++ (← msg.toString)
     for blk in blocks do
       let (st', outcome) ← checkBlock inputCtx blk st
       st := st'
